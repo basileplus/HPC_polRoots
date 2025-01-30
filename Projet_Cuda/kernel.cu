@@ -65,7 +65,7 @@ void raz_solutions(void)
 		Solutions_1[i].reel = Solutions_1[i].imaginaire = 0.0;
 		Solutions_2[i].reel = Solutions_2[i].imaginaire = 0.0;
 	}
-}
+}	
 
 // La fonction suivante affiche les racines des quatre derniers polynomes 
 void print_results(char* mess)
@@ -83,16 +83,99 @@ void print_results(char* mess)
 // A compléter
 void poly2_scalaire(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 {
+	float Delta;
+	float delta;
+	int i;
+	for (i = 0; i < NB_POLYS; i++)
+	{
+		Delta = B[i] * B[i] - 4 * A[i] * C[i];
+		delta = sqrtf(fmax(-Delta, Delta));		
+		float denom = 1 / (2 * A[i]);
+		float first_term = -B[i] * denom;
+		float second_term = delta * denom;
+		if (Delta > 0) {
+			Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
+			Sols_2[i].reel = first_term + second_term; Sols_2[i].imaginaire = 0;
+		}
+		else {	
+			Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
+			Sols_2[i].reel = first_term; Sols_2[i].imaginaire = - second_term;
+		}
+	}
 }
 
 // A compléter
 void poly2_scalaire_omp(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 {
+	#pragma omp parallel
+	{
+		float Delta;
+		float delta;
+		int i;
+		#pragma omp for
+		for (i = 0; i < NB_POLYS; i++)
+		{
+			Delta = B[i] * B[i] - 4 * A[i] * C[i];
+			delta = sqrtf(fmax(-Delta, Delta));
+			float denom = 1 / (2 * A[i]);
+			float first_term = -B[i] * denom;
+			float second_term = delta * denom;
+			if (Delta > 0) {
+				Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
+				Sols_2[i].reel = first_term + second_term; Sols_2[i].imaginaire = 0;
+			}
+			else {
+				Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
+				Sols_2[i].reel = first_term; Sols_2[i].imaginaire = -second_term;
+			}
+		}
+	}
+}
+
+static inline __m128 compute_opposite(__m128 vect) {
+	__m128 sign_mask = _mm_castsi128_ps(_mm_set1_epi32(0x80000000));  // Masque avec uniquement le bit de signe à 1
+	return _mm_xor_ps(vect, sign_mask);  // Inversion du bit de signe
 }
 
 // A compléter
 void poly2_sse2(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 {
+	#pragma omp parallel
+	{
+		__m128 zero = _mm_setzero_ps();                        // vecteur 0 pour les comparaisons Delta > 0
+		__m128 one = _mm_set1_ps(1.0f);
+		#pragma omp for
+		for (int i = 0; i < NB_POLYS; i++)
+		{
+			__m128 delta;
+			__m128 vectA = _mm_load_ps(&A[i]);
+			__m128 vectB = _mm_load_ps(&B[i]);
+			__m128 vectC = _mm_load_ps(&C[i]);
+			__m128 b_squared = _mm_mul_ps(vectB, vectB);            // B[i] * B[i]
+			__m128 ac_product = _mm_mul_ps(vectA, vectC);           // A[i] * C[i]
+			__m128 scaled_ac = _mm_mul_ps(ac_product, _mm_set1_ps(4.0f)); // 4 * A[i] * C[i]
+			__m128 Delta = _mm_sub_ps(b_squared, scaled_ac);        // Delta = B[i] * B[i] - 4 * A[i] * C[i]
+			__m128 denom = _mm_div_ps(one, _mm_add_ps(vectA, vectA)); // denom = 1/(2 * A)
+
+			__m128 abs_mask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));  // Mask avec tous les bits sauf le bit de signe
+			__m128 delta = _mm_and_ps(Delta, abs_mask);                     // AND bit a bit pour enlever bit de signe
+			__m128 sign_mask = _mm_cmpge_ps(Delta, zero); // vaut 0xfffffffff si Delta >= 0
+
+			__m128 first_term = _mm_mul_ps(compute_opposite(vectB), denom); // first_term = -B * denom
+			__m128 second_term = _mm_mul_ps(denom, delta); // second_term = delta * denom
+
+			__m128 reel = _mm_add_ps(first_term, _mm_and_ps(second_term, sign_mask));
+
+			if (Delta > 0) {
+				Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
+				Sols_2[i].reel = first_term + second_term; Sols_2[i].imaginaire = 0;
+			}
+			else {
+				Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
+				Sols_2[i].reel = first_term; Sols_2[i].imaginaire = -second_term;
+			}
+		}
+	}
 }
 
 // A compléter
