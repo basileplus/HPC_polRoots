@@ -95,7 +95,7 @@ void poly2_scalaire(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t
 		float second_term = delta * denom;
 		if (Delta > 0) {
 			Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
-			Sols_2[i].reel = first_term + second_term; Sols_2[i].imaginaire = 0;
+			Sols_2[i].reel = first_term - second_term; Sols_2[i].imaginaire = 0;
 		}
 		else {	
 			Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
@@ -122,7 +122,7 @@ void poly2_scalaire_omp(float* A, float* B, float* C, complexe_t* Sols_1, comple
 			float second_term = delta * denom;
 			if (Delta > 0) {
 				Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
-				Sols_2[i].reel = first_term + second_term; Sols_2[i].imaginaire = 0;
+				Sols_2[i].reel = first_term - second_term; Sols_2[i].imaginaire = 0;
 			}
 			else {
 				Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
@@ -138,14 +138,11 @@ static inline __m128 compute_opposite(__m128 vect) {
 }
 
 // A compléter
-// TODO c'est le unpack qui se fait pas dans le bon ordre mais certaines valeurs sont bonnes pour sol1 juste pas au bon endroit
 	void poly2_sse2(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 	{
-		#pragma omp parallel
 		{
 			__m128 zero = _mm_setzero_ps();                        // vecteur 0 pour les comparaisons Delta > 0
 			__m128 one = _mm_set1_ps(1.0f);
-			#pragma omp for
 			for (int i = 0; i < NB_POLYS; i+=4)
 			{
 				__m128 vectA = _mm_load_ps(&A[i]);
@@ -170,47 +167,64 @@ static inline __m128 compute_opposite(__m128 vect) {
 				__m128 imaginaire2 = compute_opposite(_mm_andnot_ps(sign_mask, second_term));
 
 				__m128 vecSol1hi = _mm_unpackhi_ps(reel1, imaginaire1); __m128 vecSol1lo = _mm_unpacklo_ps(reel1, imaginaire1); // rearrange les vecteurs pour avoir reel | imaginaire | reel | imaginaire (MSB) et reel | imaginaire | reel | imaginaire (LSB)
-				__m128 vecSol2hi = _mm_unpackhi_ps(imaginaire2, reel2); __m128 vecSol2lo = _mm_unpacklo_ps(imaginaire2, reel2);
-				_mm_store_ps((float*)(Sols_1 + i), vecSol1hi); _mm_store_ps((float*)(Sols_1 + i + 2), vecSol1lo); // on interprete Sols_1 qui est de type complexe comme un float
-				_mm_store_ps((float*)(Sols_2 + i), vecSol2hi); _mm_store_ps((float*)(Sols_2 + i + 2), vecSol2lo);
+				__m128 vecSol2hi = _mm_unpackhi_ps(reel2, imaginaire2); __m128 vecSol2lo = _mm_unpacklo_ps(reel2, imaginaire2);
+				
+				// Stocke 16 octets (2 complexes) dans Sols_1[i] et Sols_1[i+1]
+				_mm_store_ps((float*)&Sols_1[i], vecSol1lo);
+				// Stocke 16 octets (2 complexes) dans Sols_1[i+2] et Sols_1[i+3]
+				_mm_store_ps((float*)&Sols_1[i + 2],vecSol1hi);
+				
+				_mm_store_ps((float*)&Sols_2[i], vecSol2lo);
+				_mm_store_ps((float*)&Sols_2[i + 2], vecSol2hi);
 
 			}
 		}
 	}
 
-//void poly2_sse2(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2) {
-//#pragma omp parallel
-//		{
-//			const __m128 zero = _mm_setzero_ps();
-//			const __m128 one = _mm_set1_ps(1.0f);
-//			const __m128 four = _mm_set1_ps(4.0f);
-//			const __m128 abs_mask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));
-//
-//#pragma omp for
-//			for (int i = 0; i < NB_POLYS; i++) {
-//				const __m128 a = _mm_load_ps(A + i);
-//				const __m128 b = _mm_load_ps(B + i);
-//				const __m128 c = _mm_load_ps(C + i);
-//
-//				const __m128 delta = _mm_sub_ps(_mm_mul_ps(b, b), _mm_mul_ps(four, _mm_mul_ps(a, c)));
-//				const __m128 denom = _mm_div_ps(one, _mm_add_ps(a, a));
-//				const __m128 sign_mask = _mm_cmpge_ps(delta, zero);
-//
-//				const __m128 st = _mm_mul_ps(_mm_and_ps(delta, abs_mask), denom);
-//				const __m128 ft = _mm_mul_ps(_mm_sub_ps(zero, b), denom);
-//				const __m128 st_masked = _mm_and_ps(st, sign_mask);
-//
-//				_mm_store_ps(&Sols_1[i].reel, _mm_add_ps(ft, st_masked));
-//				_mm_store_ps(&Sols_1[i].imaginaire, _mm_andnot_ps(sign_mask, st));
-//				_mm_store_ps(&Sols_2[i].reel, _mm_sub_ps(ft, st_masked));
-//				_mm_store_ps(&Sols_2[i].imaginaire, _mm_sub_ps(zero, _mm_andnot_ps(sign_mask, st)));
-//			}
-//		}
-//	}
-
 // A compléter
 void poly2_sse2_omp(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 {
+	#pragma omp parallel
+	{
+		__m128 zero = _mm_setzero_ps();                        // vecteur 0 pour les comparaisons Delta > 0
+		__m128 one = _mm_set1_ps(1.0f);
+		#pragma omp for
+		for (int i = 0; i < NB_POLYS; i += 4)
+		{
+			__m128 vectA = _mm_load_ps(&A[i]);
+			__m128 vectB = _mm_load_ps(&B[i]);
+			__m128 vectC = _mm_load_ps(&C[i]);
+			__m128 b_squared = _mm_mul_ps(vectB, vectB);            // B[i] * B[i]
+			__m128 ac_product = _mm_mul_ps(vectA, vectC);           // A[i] * C[i]
+			__m128 scaled_ac = _mm_mul_ps(ac_product, _mm_set1_ps(4.0)); // 4 * A[i] * C[i]
+			__m128 Delta = _mm_sub_ps(b_squared, scaled_ac);        // Delta = B[i] * B[i] - 4 * A[i] * C[i]
+			__m128 denom = _mm_div_ps(one, _mm_add_ps(vectA, vectA)); // denom = 1/(2 * A)
+
+			__m128 abs_mask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));  // Mask avec tous les bits sauf le bit de signe
+			__m128 delta = _mm_sqrt_ps(_mm_and_ps(Delta, abs_mask));
+			__m128 sign_mask = _mm_cmpge_ps(Delta, zero); // vaut 0xfffffffff si Delta >= 0
+
+			__m128 first_term = _mm_mul_ps(compute_opposite(vectB), denom); // first_term = -B * denom
+			__m128 second_term = _mm_mul_ps(denom, delta); // second_term = delta * denom
+
+			__m128 reel1 = _mm_add_ps(first_term, _mm_and_ps(second_term, sign_mask));
+			__m128 reel2 = _mm_sub_ps(first_term, _mm_and_ps(second_term, sign_mask));
+			__m128 imaginaire1 = _mm_andnot_ps(sign_mask, second_term);
+			__m128 imaginaire2 = compute_opposite(_mm_andnot_ps(sign_mask, second_term));
+
+			__m128 vecSol1hi = _mm_unpackhi_ps(reel1, imaginaire1); __m128 vecSol1lo = _mm_unpacklo_ps(reel1, imaginaire1); // rearrange les vecteurs pour avoir reel | imaginaire | reel | imaginaire (MSB) et reel | imaginaire | reel | imaginaire (LSB)
+			__m128 vecSol2hi = _mm_unpackhi_ps(reel2, imaginaire2); __m128 vecSol2lo = _mm_unpacklo_ps(reel2, imaginaire2);
+
+			// Stocke 16 octets (2 complexes) dans Sols_1[i] et Sols_1[i+1]
+			_mm_store_ps((float*)&Sols_1[i], vecSol1lo);
+			// Stocke 16 octets (2 complexes) dans Sols_1[i+2] et Sols_1[i+3]
+			_mm_store_ps((float*)&Sols_1[i + 2], vecSol1hi);
+
+			_mm_store_ps((float*)&Sols_2[i], vecSol2lo);
+			_mm_store_ps((float*)&Sols_2[i + 2], vecSol2hi);
+
+		}
+	}
 }
 
 // A compléter
