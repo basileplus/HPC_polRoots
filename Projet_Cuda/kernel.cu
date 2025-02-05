@@ -230,7 +230,38 @@ void poly2_sse2_omp(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t
 // A compléter
 __global__ void poly2_cuda(float* A, float* B, float* C, complexe_t* Sols_1, complexe_t* Sols_2)
 {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	// On ne depasse pas la taille du tableau de poly
+	if (i >= NB_POLYS) return;	
+
+	float Delta;
+	float delta;
+
+	// Chargement des coefficients dans des registres pour accès rapide
+	float currentA = A[i];
+	float currentB = B[i];
+	float currentC = C[i];
+
+	Delta = currentB * currentB - 4 * currentA * currentC;
+	delta = sqrtf(fmax(-Delta, Delta));
+	float denom = 1 / (2 * currentA);
+	float first_term = -currentB * denom;
+	float second_term = delta * denom;
+	if (Delta > 0) {
+		Sols_1[i].reel = first_term + second_term; Sols_1[i].imaginaire = 0;
+		Sols_2[i].reel = first_term - second_term; Sols_2[i].imaginaire = 0;
+	}
+	else {
+		Sols_1[i].reel = first_term; Sols_1[i].imaginaire = second_term;
+		Sols_2[i].reel = first_term; Sols_2[i].imaginaire = -second_term;
+	}
 }
+
+
+
+#define NUM_THREADS_PER_BLOCKS 128
+
 
 int main()
 {
@@ -238,6 +269,10 @@ int main()
 	float* ptr_Cuda_coefs_A, * ptr_Cuda_coefs_B, * ptr_Cuda_coefs_C;
 	complexe_t* ptr_Cuda_sols_1, * ptr_Cuda_sols_2;
 	cudaError_t cudaError;
+
+	// on choisit un nb de block suffisant pour pouvoir parcourir l'ensemble des poly
+	// ici la valeur entiere sup
+	int nbBlocks = (NB_POLYS + NUM_THREADS_PER_BLOCKS - 1) / NUM_THREADS_PER_BLOCKS;
 
 	print_cuda_properties();
 	init_poly_coefs();
@@ -248,21 +283,11 @@ int main()
 	dureeScalaire = Fin - Debut;
 	print_results("Scal    ");
 
-	for (int i = 0; i < NB_POLYS; i++) {
-		Solutions_1[i].reel = 0; Solutions_1[i].imaginaire = 0;
-		Solutions_2[i].reel = 0; Solutions_2[i].imaginaire = 0;
-	}
-
 	Debut = __rdtsc();
 	poly2_scalaire_omp(coefs_A, coefs_B, coefs_C, Solutions_1, Solutions_2);
 	Fin = __rdtsc();
 	dureeScalaireOMP = Fin - Debut;
 	print_results("Scal OMP");
-
-	for (int i = 0; i < NB_POLYS; i++) {
-		Solutions_1[i].reel = 0; Solutions_1[i].imaginaire = 0;
-		Solutions_2[i].reel = 0; Solutions_2[i].imaginaire = 0;
-	}
 
 	Debut = __rdtsc();
 	poly2_sse2(coefs_A, coefs_B, coefs_C, Solutions_1, Solutions_2);
@@ -284,13 +309,14 @@ int main()
 	cudaCheckError(cudaMemcpy(ptr_Cuda_coefs_A, coefs_A, NB_POLYS * sizeof(float), cudaMemcpyHostToDevice), "cudaMemcpy - coefs_A");
 	cudaCheckError(cudaMemcpy(ptr_Cuda_coefs_B, coefs_B, NB_POLYS * sizeof(float), cudaMemcpyHostToDevice), "cudaMemcpy - coefs_B");
 	cudaCheckError(cudaMemcpy(ptr_Cuda_coefs_C, coefs_C, NB_POLYS * sizeof(float), cudaMemcpyHostToDevice), "cudaMemcpy - coefs_C");
+
 	Debut = __rdtsc();
-	poly2_cuda << <1, 1 >> > (ptr_Cuda_coefs_A, ptr_Cuda_coefs_B, ptr_Cuda_coefs_C, ptr_Cuda_sols_1, ptr_Cuda_sols_2);
+	poly2_cuda <<< nbBlocks, NUM_THREADS_PER_BLOCKS >>> (ptr_Cuda_coefs_A, ptr_Cuda_coefs_B, ptr_Cuda_coefs_C, ptr_Cuda_sols_1, ptr_Cuda_sols_2);
 	cudaCheckError(cudaGetLastError(), "cuda Kernel poly2");
 	cudaDeviceSynchronize();
 	Fin = __rdtsc();
 	dureeCuda = Fin - Debut;
-
+		
 	cudaCheckError(cudaMemcpy(Solutions_1, ptr_Cuda_sols_1, NB_POLYS * sizeof(complexe_t), cudaMemcpyDeviceToHost), "cudaMemcpy - sols_1");
 	cudaCheckError(cudaMemcpy(Solutions_2, ptr_Cuda_sols_2, NB_POLYS * sizeof(complexe_t), cudaMemcpyDeviceToHost), "cudaMemcpy - sols_2");
 	cudaCheckError(cudaFree(ptr_Cuda_coefs_A), "cudaFree - coefs_A");
